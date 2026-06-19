@@ -1,0 +1,49 @@
+name: Release
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: ver
+        run: |
+          latest=$(git tag --sort=-v:refname | head -1)
+          latest=${latest:-v0.0.0}
+          base=${latest#v}
+          IFS=. read -r MA MI PA <<< "$base"
+          if git log "${latest}..HEAD" --pretty=%s 2>/dev/null | grep -qiE '^feat'; then
+            MI=$((MI+1)); PA=0
+          else
+            PA=$((PA+1))
+          fi
+          echo "version=v${MA}.${MI}.${PA}" >> "$GITHUB_OUTPUT"
+
+      - name: Tag and create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          git tag "$V"
+          git push origin "$V"
+          gh release create "$V" --generate-notes
+
+  deploy:
+    needs: release
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy (stub)
+        run: bash scripts/deploy.sh "${{ needs.release.outputs.version }}"

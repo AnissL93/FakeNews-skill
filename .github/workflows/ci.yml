@@ -1,0 +1,15 @@
+name: CI
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: bash scripts/build.sh
+      - name: Run tests
+        run: bash scripts/test.sh
