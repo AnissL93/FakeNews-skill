@@ -16,6 +16,7 @@ SKILL_PATH = SKILL_ROOT / "SKILL.md"
 OUTPUT_FORMAT_PATH = SKILL_ROOT / "references" / "output-format.md"
 FACTUAL_RED_FLAGS_PATH = SKILL_ROOT / "references" / "factual-red-flags.md"
 BIAS_FRAMING_PATH = SKILL_ROOT / "references" / "bias-framing.md"
+LOGICAL_FALLACIES_PATH = SKILL_ROOT / "references" / "logical-fallacies.md"
 
 
 def fail(check: str, message: str) -> None:
@@ -140,6 +141,33 @@ def validate_bias_framing() -> None:
         fail("T26", "bias-framing.md must name the Bias & framing dimension label")
 
 
+def validate_logical_fallacies() -> None:
+    if not LOGICAL_FALLACIES_PATH.is_file():
+        fail("T28", f"{LOGICAL_FALLACIES_PATH.relative_to(ROOT)} is missing")
+
+    text = LOGICAL_FALLACIES_PATH.read_text(encoding="utf-8")
+    if not text.strip():
+        fail("T28", f"{LOGICAL_FALLACIES_PATH.relative_to(ROOT)} is empty")
+
+    if not re.search(r"^#{1,6}\s+.*(?:logical|fallac).*$", text, flags=re.IGNORECASE | re.MULTILINE):
+        fail("T29", "logical-fallacies.md must contain a logical or fallacy heading")
+
+    signal_entries = re.findall(r"^\s*(?:[-*]\s+\S|#{2,6}\s+\S)", text, flags=re.MULTILINE)
+    if len(signal_entries) < 6:
+        fail("T30", "logical-fallacies.md must enumerate at least six signal entries")
+
+    if not re.search(r"\bexample\b", text, flags=re.IGNORECASE):
+        fail("T31", "logical-fallacies.md must include at least one concrete example")
+
+    text_lower = text.lower()
+    if "verbatim" not in text_lower or "quote" not in text_lower:
+        fail("T32", "logical-fallacies.md must require a verbatim quote")
+    if "severity" not in text_lower:
+        fail("T32", "logical-fallacies.md must mention severity")
+    if "logical fallacy" not in text_lower:
+        fail("T32", "logical-fallacies.md must name the Logical fallacy dimension label")
+
+
 def main() -> int:
     frontmatter, body = parse_skill()
 
@@ -173,6 +201,7 @@ def main() -> int:
     validate_output_format()
     validate_factual_red_flags()
     validate_bias_framing()
+    validate_logical_fallacies()
 
     if "references/output-format.md" not in body:
         fail("T15", "SKILL.md must reference references/output-format.md")
@@ -190,6 +219,10 @@ def main() -> int:
         fail("T27", "detection step must reference references/bias-framing.md")
     if not re.search(r"\b(placeholder|todo)\b", detection_step, flags=re.IGNORECASE):
         fail("T27", "detection step must keep a placeholder or TODO for remaining dimensions")
+    if "references/logical-fallacies.md" not in detection_step:
+        fail("T33", "detection step must reference references/logical-fallacies.md")
+    if not re.search(r"\b(placeholder|todo)\b", detection_step, flags=re.IGNORECASE):
+        fail("T33", "detection step must keep a placeholder or TODO for remaining dimensions")
     for step_name, step_text in (("score/aggregate", score_step), ("render-verdict", render_step)):
         if re.search(r"\b(placeholder|todo)\b", step_text, flags=re.IGNORECASE):
             fail("T15", f"{step_name} step must not contain placeholder or TODO")
