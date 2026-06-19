@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Project tests. The agent rewrites this to call the real test runner for your stack.
+# Project tests.
 set -euo pipefail
-echo "scripts/test.sh: no tests configured yet"
-exit 0
+python3 scripts/validate_skill.py
