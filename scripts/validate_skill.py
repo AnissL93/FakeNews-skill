@@ -22,6 +22,7 @@ NARRATIVE_MANIPULATION_PATH = SKILL_ROOT / "references" / "narrative-manipulatio
 FINDINGS_FORMAT_PATH = SKILL_ROOT / "references" / "findings-format.md"
 SCORING_PATH = SKILL_ROOT / "references" / "scoring.md"
 SUMMARY_FORMAT_PATH = SKILL_ROOT / "references" / "summary-format.md"
+UNTRUSTED_CONTENT_PATH = SKILL_ROOT / "references" / "untrusted-content.md"
 
 
 def fail(check: str, message: str) -> None:
@@ -57,6 +58,17 @@ def require_step(body: str, step_number: int) -> str:
     if not match:
         fail("T15", f"workflow step {step_number} is missing")
     return match.group(1)
+
+
+def require_section(body: str, heading_pattern: str, check: str) -> str:
+    match = re.search(
+        rf"^#{{1,6}}\s+[^\n]*{heading_pattern}[^\n]*\n(.*?)(?=^#{{1,6}}\s+|\Z)",
+        body,
+        flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
+    )
+    if not match:
+        fail(check, f"body must contain a {heading_pattern} section")
+    return match.group(0)
 
 
 def validate_output_format() -> None:
@@ -371,6 +383,40 @@ def validate_summary_format(render_step: str) -> None:
         fail("T64", "output-format.md Verdict section must include a plain-language bottom-line line")
 
 
+def validate_untrusted_content(body: str) -> None:
+    if not UNTRUSTED_CONTENT_PATH.is_file():
+        fail("T65", f"{UNTRUSTED_CONTENT_PATH.relative_to(ROOT)} is missing")
+
+    text = UNTRUSTED_CONTENT_PATH.read_text(encoding="utf-8")
+    if not text.strip():
+        fail("T65", f"{UNTRUSTED_CONTENT_PATH.relative_to(ROOT)} is empty")
+
+    if not re.search(r"^#{1,6}\s+.*(?:untrusted|injection|data).*$", text, flags=re.IGNORECASE | re.MULTILINE):
+        fail("T66", "untrusted-content.md must contain an untrusted/injection/data heading")
+
+    text_lower = text.lower()
+    follow_terms = ("never follow", "not follow", "do not follow", "never obey", "ignore", "inert")
+    if "instruction" not in text_lower or not any(term in text_lower for term in follow_terms):
+        fail("T67", "untrusted-content.md must state that embedded instructions are data and not followed")
+
+    invariant_terms = ("change", "alter", "skip", "override", "reveal")
+    if not any(term in text_lower for term in ("rating", "verdict")):
+        fail("T68", "untrusted-content.md must reference the rating or verdict")
+    if not any(term in text_lower for term in invariant_terms):
+        fail("T68", "untrusted-content.md must state invariants the sample cannot change")
+
+    if not any(term in text_lower for term in ("report", "noted", "flag")):
+        fail("T69", "untrusted-content.md must say injection attempts are reported or noted")
+    if "example" not in text_lower:
+        fail("T69", "untrusted-content.md must include a worked example")
+
+    input_section = require_section(body, "input", "T70")
+    if "references/untrusted-content.md" not in input_section:
+        fail("T70", "Input handling section must reference references/untrusted-content.md")
+    if re.search(r"\b(placeholder|todo)\b", input_section, flags=re.IGNORECASE):
+        fail("T70", "Input handling section must not contain placeholder or TODO")
+
+
 def main() -> int:
     frontmatter, body = parse_skill()
 
@@ -415,6 +461,7 @@ def main() -> int:
     validate_findings_format(body, render_step)
     validate_scoring(score_step)
     validate_summary_format(render_step)
+    validate_untrusted_content(body)
     if "references/factual-red-flags.md" not in detection_step:
         fail("T21", "detection step must reference references/factual-red-flags.md")
     if "references/bias-framing.md" not in detection_step:
