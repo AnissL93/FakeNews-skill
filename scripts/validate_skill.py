@@ -19,6 +19,7 @@ BIAS_FRAMING_PATH = SKILL_ROOT / "references" / "bias-framing.md"
 LOGICAL_FALLACIES_PATH = SKILL_ROOT / "references" / "logical-fallacies.md"
 CLICKBAIT_HYPE_PATH = SKILL_ROOT / "references" / "clickbait-hype.md"
 NARRATIVE_MANIPULATION_PATH = SKILL_ROOT / "references" / "narrative-manipulation.md"
+FINDINGS_FORMAT_PATH = SKILL_ROOT / "references" / "findings-format.md"
 
 
 def fail(check: str, message: str) -> None:
@@ -224,6 +225,63 @@ def validate_narrative_manipulation() -> None:
         fail("T44", "narrative-manipulation.md must name the Narrative manipulation dimension label")
 
 
+def validate_findings_format(body: str, render_step: str) -> None:
+    if not FINDINGS_FORMAT_PATH.is_file():
+        fail("T46", f"{FINDINGS_FORMAT_PATH.relative_to(ROOT)} is missing")
+
+    text = FINDINGS_FORMAT_PATH.read_text(encoding="utf-8")
+    if not text.strip():
+        fail("T46", f"{FINDINGS_FORMAT_PATH.relative_to(ROOT)} is empty")
+
+    if not re.search(r"^#{1,6}\s+.*(?:finding|evidence|format).*$", text, flags=re.IGNORECASE | re.MULTILINE):
+        fail("T47", "findings-format.md must contain a finding, evidence, or format heading")
+
+    text_lower = text.lower()
+    for term in ("dimension", "severity", "verbatim", "quote"):
+        if term not in text_lower:
+            fail("T48", f"findings-format.md must name the {term} entry slot")
+
+    for severity in ("High", "Medium", "Low"):
+        if not re.search(
+            rf"^\s*(?:[-*]\s*)?(?:\*\*)?{severity}(?:\*\*)?\s*(?:[-:—–]\s+|\s+-\s+)\S+",
+            text,
+            flags=re.IGNORECASE | re.MULTILINE,
+        ):
+            fail("T49", f"findings-format.md must define the {severity} severity")
+
+    for label in (
+        "factual red flag",
+        "bias & framing",
+        "logical fallacy",
+        "clickbait / hype",
+        "narrative manipulation",
+    ):
+        if label not in text_lower:
+            fail("T50", f"findings-format.md must name the {label} dimension label")
+
+    exact_terms = ("exact", "substring", "character-for-character")
+    invented_terms = ("paraphrase", "fabricat")
+    if "verbatim" not in text_lower or not any(term in text_lower for term in exact_terms):
+        fail("T51", "findings-format.md must state that quotes are exact/verbatim")
+    if not any(term in text_lower for term in invented_terms):
+        fail("T51", "findings-format.md must prohibit paraphrased or fabricated quotes")
+
+    if not re.search(r"\bexample\b", text, flags=re.IGNORECASE):
+        fail("T52", "findings-format.md must include a worked example")
+    if "references/findings-format.md" not in body:
+        fail("T52", "SKILL.md must reference references/findings-format.md")
+    if "references/findings-format.md" not in render_step:
+        fail("T52", "render step must reference references/findings-format.md")
+    if "references/output-format.md" not in render_step:
+        fail("T52", "render step must reference references/output-format.md")
+    if re.search(r"\b(placeholder|todo)\b", render_step, flags=re.IGNORECASE):
+        fail("T52", "render step must not contain placeholder or TODO")
+
+    output_text = OUTPUT_FORMAT_PATH.read_text(encoding="utf-8")
+    if "references/findings-format.md" not in output_text:
+        fail("T52", "output-format.md Findings section must point to references/findings-format.md")
+
+
 def main() -> int:
     frontmatter, body = parse_skill()
 
@@ -265,6 +323,7 @@ def main() -> int:
     detection_step = require_step(body, 2)
     score_step = require_step(body, 3)
     render_step = require_step(body, 4)
+    validate_findings_format(body, render_step)
     if "references/factual-red-flags.md" not in detection_step:
         fail("T21", "detection step must reference references/factual-red-flags.md")
     if "references/bias-framing.md" not in detection_step:

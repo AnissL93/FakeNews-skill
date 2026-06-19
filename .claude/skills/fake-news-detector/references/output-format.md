@@ -8,6 +8,8 @@
 
 # Output Template
 
+Format each finding according to the per-finding rules in `references/findings-format.md`.
+
 ```markdown
 ## Verdict
 
