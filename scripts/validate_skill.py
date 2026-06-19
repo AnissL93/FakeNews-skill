@@ -11,7 +11,9 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL_PATH = ROOT / ".claude" / "skills" / "fake-news-detector" / "SKILL.md"
+SKILL_ROOT = ROOT / ".claude" / "skills" / "fake-news-detector"
+SKILL_PATH = SKILL_ROOT / "SKILL.md"
+OUTPUT_FORMAT_PATH = SKILL_ROOT / "references" / "output-format.md"
 
 
 def fail(check: str, message: str) -> None:
@@ -40,6 +42,46 @@ def parse_skill() -> tuple[dict[str, object], str]:
         fail("T2", "frontmatter must parse to a YAML mapping")
 
     return frontmatter, parts[2]
+
+
+def require_step(body: str, step_number: int) -> str:
+    match = re.search(rf"^\s*{step_number}\.\s+(.+)$", body, flags=re.MULTILINE)
+    if not match:
+        fail("T15", f"workflow step {step_number} is missing")
+    return match.group(1)
+
+
+def validate_output_format() -> None:
+    if not OUTPUT_FORMAT_PATH.is_file():
+        fail("T10", f"{OUTPUT_FORMAT_PATH.relative_to(ROOT)} is missing")
+
+    text = OUTPUT_FORMAT_PATH.read_text(encoding="utf-8")
+    if not text.strip():
+        fail("T10", f"{OUTPUT_FORMAT_PATH.relative_to(ROOT)} is empty")
+
+    if not re.search(r"^#{1,6}\s+.*(?:rating|scale).*$", text, flags=re.IGNORECASE | re.MULTILINE):
+        fail("T11", "output-format.md must contain a rating or scale heading")
+
+    for band in ("Credible", "Mostly Credible", "Mixed", "Low Credibility", "Not Credible"):
+        band_pattern = re.escape(band)
+        if not re.search(rf"\b{band_pattern}\b", text, flags=re.IGNORECASE):
+            fail("T12", f"output-format.md must define the {band} band")
+        if not re.search(
+            rf"^\s*(?:[-*]\s*)?(?:\*\*)?{band_pattern}(?:\*\*)?\s*(?:[-:—–]\s+|\s+-\s+)\S+",
+            text,
+            flags=re.IGNORECASE | re.MULTILINE,
+        ):
+            fail("T12", f"the {band} band must include a one-line definition")
+
+    for marker in ("Verdict", "Findings", "Rationale"):
+        if not re.search(rf"\b{marker}\b", text, flags=re.IGNORECASE):
+            fail("T13", f"output-format.md must contain a {marker} marker")
+
+    text_lower = text.lower()
+    if "verbatim" not in text_lower or "quote" not in text_lower:
+        fail("T14", "findings template must require a verbatim quote")
+    if not re.search(r"\bno\s+(?:significant\s+issues|issues\s+found)\b", text, flags=re.IGNORECASE):
+        fail("T14", "findings template must define the empty-findings line")
 
 
 def main() -> int:
@@ -71,6 +113,22 @@ def main() -> int:
         fail("T8", "body must contain a Workflow heading")
     if not re.search(r"\b(placeholder|todo)\b", body, flags=re.IGNORECASE):
         fail("T8", "body must contain an explicit placeholder or TODO marker")
+
+    validate_output_format()
+
+    if "references/output-format.md" not in body:
+        fail("T15", "SKILL.md must reference references/output-format.md")
+
+    detection_step = require_step(body, 2)
+    score_step = require_step(body, 3)
+    render_step = require_step(body, 4)
+    if not re.search(r"\b(placeholder|todo)\b", detection_step, flags=re.IGNORECASE):
+        fail("T15", "detection-dimensions step must keep its placeholder for later issues")
+    for step_name, step_text in (("score/aggregate", score_step), ("render-verdict", render_step)):
+        if re.search(r"\b(placeholder|todo)\b", step_text, flags=re.IGNORECASE):
+            fail("T15", f"{step_name} step must not contain placeholder or TODO")
+        if "references/output-format.md" not in step_text:
+            fail("T15", f"{step_name} step must reference references/output-format.md")
 
     print("fake-news-detector skill scaffold validation passed")
     return 0
