@@ -18,6 +18,7 @@ FACTUAL_RED_FLAGS_PATH = SKILL_ROOT / "references" / "factual-red-flags.md"
 BIAS_FRAMING_PATH = SKILL_ROOT / "references" / "bias-framing.md"
 LOGICAL_FALLACIES_PATH = SKILL_ROOT / "references" / "logical-fallacies.md"
 CLICKBAIT_HYPE_PATH = SKILL_ROOT / "references" / "clickbait-hype.md"
+NARRATIVE_MANIPULATION_PATH = SKILL_ROOT / "references" / "narrative-manipulation.md"
 
 
 def fail(check: str, message: str) -> None:
@@ -196,6 +197,33 @@ def validate_clickbait_hype() -> None:
         fail("T38", "clickbait-hype.md must name the Clickbait / hype dimension label")
 
 
+def validate_narrative_manipulation() -> None:
+    if not NARRATIVE_MANIPULATION_PATH.is_file():
+        fail("T40", f"{NARRATIVE_MANIPULATION_PATH.relative_to(ROOT)} is missing")
+
+    text = NARRATIVE_MANIPULATION_PATH.read_text(encoding="utf-8")
+    if not text.strip():
+        fail("T40", f"{NARRATIVE_MANIPULATION_PATH.relative_to(ROOT)} is empty")
+
+    if not re.search(r"^#{1,6}\s+.*(?:narrative|manipulation).*$", text, flags=re.IGNORECASE | re.MULTILINE):
+        fail("T41", "narrative-manipulation.md must contain a narrative or manipulation heading")
+
+    signal_entries = re.findall(r"^\s*(?:[-*]\s+\S|#{2,6}\s+\S)", text, flags=re.MULTILINE)
+    if len(signal_entries) < 6:
+        fail("T42", "narrative-manipulation.md must enumerate at least six signal entries")
+
+    if not re.search(r"\bexample\b", text, flags=re.IGNORECASE):
+        fail("T43", "narrative-manipulation.md must include at least one concrete example")
+
+    text_lower = text.lower()
+    if "verbatim" not in text_lower or "quote" not in text_lower:
+        fail("T44", "narrative-manipulation.md must require a verbatim quote")
+    if "severity" not in text_lower:
+        fail("T44", "narrative-manipulation.md must mention severity")
+    if "narrative manipulation" not in text_lower:
+        fail("T44", "narrative-manipulation.md must name the Narrative manipulation dimension label")
+
+
 def main() -> int:
     frontmatter, body = parse_skill()
 
@@ -223,14 +251,13 @@ def main() -> int:
 
     if not re.search(r"^#{1,6}\s+.*workflow.*$", body, flags=re.IGNORECASE | re.MULTILINE):
         fail("T8", "body must contain a Workflow heading")
-    if not re.search(r"\b(placeholder|todo)\b", body, flags=re.IGNORECASE):
-        fail("T8", "body must contain an explicit placeholder or TODO marker")
 
     validate_output_format()
     validate_factual_red_flags()
     validate_bias_framing()
     validate_logical_fallacies()
     validate_clickbait_hype()
+    validate_narrative_manipulation()
 
     if "references/output-format.md" not in body:
         fail("T15", "SKILL.md must reference references/output-format.md")
@@ -238,20 +265,12 @@ def main() -> int:
     detection_step = require_step(body, 2)
     score_step = require_step(body, 3)
     render_step = require_step(body, 4)
-    if not re.search(r"\b(placeholder|todo)\b", detection_step, flags=re.IGNORECASE):
-        fail("T15", "detection-dimensions step must keep its placeholder for later issues")
     if "references/factual-red-flags.md" not in detection_step:
         fail("T21", "detection step must reference references/factual-red-flags.md")
-    if not re.search(r"\b(placeholder|todo)\b", detection_step, flags=re.IGNORECASE):
-        fail("T21", "detection step must keep a placeholder or TODO for remaining dimensions")
     if "references/bias-framing.md" not in detection_step:
         fail("T27", "detection step must reference references/bias-framing.md")
-    if not re.search(r"\b(placeholder|todo)\b", detection_step, flags=re.IGNORECASE):
-        fail("T27", "detection step must keep a placeholder or TODO for remaining dimensions")
     if "references/logical-fallacies.md" not in detection_step:
         fail("T33", "detection step must reference references/logical-fallacies.md")
-    if not re.search(r"\b(placeholder|todo)\b", detection_step, flags=re.IGNORECASE):
-        fail("T33", "detection step must keep a placeholder or TODO for remaining dimensions")
     for reference in (
         "references/factual-red-flags.md",
         "references/bias-framing.md",
@@ -260,8 +279,10 @@ def main() -> int:
     ):
         if reference not in detection_step:
             fail("T39", f"detection step must reference {reference}")
-    if not re.search(r"\b(placeholder|todo)\b", detection_step, flags=re.IGNORECASE):
-        fail("T39", "detection step must keep a placeholder or TODO for remaining dimensions")
+    if "references/narrative-manipulation.md" not in detection_step:
+        fail("T45", "detection step must reference references/narrative-manipulation.md")
+    if re.search(r"\b(placeholder|todo)\b", detection_step, flags=re.IGNORECASE):
+        fail("T45", "detection step must not contain a placeholder or TODO for remaining dimensions")
     for step_name, step_text in (("score/aggregate", score_step), ("render-verdict", render_step)):
         if re.search(r"\b(placeholder|todo)\b", step_text, flags=re.IGNORECASE):
             fail("T15", f"{step_name} step must not contain placeholder or TODO")
