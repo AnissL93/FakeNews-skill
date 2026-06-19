@@ -23,6 +23,22 @@ FINDINGS_FORMAT_PATH = SKILL_ROOT / "references" / "findings-format.md"
 SCORING_PATH = SKILL_ROOT / "references" / "scoring.md"
 SUMMARY_FORMAT_PATH = SKILL_ROOT / "references" / "summary-format.md"
 UNTRUSTED_CONTENT_PATH = SKILL_ROOT / "references" / "untrusted-content.md"
+FIXTURES_ROOT = SKILL_ROOT / "fixtures"
+MISLEADING_FIXTURE_PATH = FIXTURES_ROOT / "misleading-sample.md"
+CREDIBLE_FIXTURE_PATH = FIXTURES_ROOT / "credible-sample.md"
+
+RATING_BANDS = ("Credible", "Mostly Credible", "Mixed", "Low Credibility", "Not Credible")
+HIGH_RATING_BANDS = ("Credible", "Mostly Credible")
+LOW_RATING_BANDS = ("Mixed", "Low Credibility", "Not Credible")
+DIMENSION_LABELS = (
+    "Factual red flag",
+    "Bias & framing",
+    "Logical fallacy",
+    "Clickbait / hype",
+    "Narrative manipulation",
+)
+SEVERITIES = ("High", "Medium", "Low")
+OMISSION_MARKER = "(no quotable excerpt \u2014 omission)"
 
 
 def fail(check: str, message: str) -> None:
@@ -51,6 +67,49 @@ def parse_skill() -> tuple[dict[str, object], str]:
         fail("T2", "frontmatter must parse to a YAML mapping")
 
     return frontmatter, parts[2]
+
+
+def parse_fixture(path: Path, check: str) -> tuple[dict[str, object], str]:
+    if not path.is_file():
+        fail(check, f"{path.relative_to(ROOT)} is missing")
+
+    text = path.read_text(encoding="utf-8")
+    if not text.strip():
+        fail(check, f"{path.relative_to(ROOT)} is empty")
+    if not text.startswith("---\n"):
+        fail(check, f"{path.relative_to(ROOT)} must start with YAML frontmatter")
+
+    parts = text.split("---\n", 2)
+    if len(parts) != 3:
+        fail(check, f"{path.relative_to(ROOT)} must contain closing --- for YAML frontmatter")
+
+    try:
+        frontmatter = yaml.safe_load(parts[1])
+    except yaml.YAMLError as exc:
+        fail(check, f"{path.relative_to(ROOT)} frontmatter is not valid YAML: {exc}")
+
+    if not isinstance(frontmatter, dict):
+        fail(check, f"{path.relative_to(ROOT)} frontmatter must parse to a YAML mapping")
+
+    body = parts[2]
+    if not body.strip():
+        fail(check, f"{path.relative_to(ROOT)} must contain a non-empty article body")
+
+    return frontmatter, body
+
+
+def quote_is_locatable(quote: str, body: str) -> bool:
+    if quote == OMISSION_MARKER:
+        return True
+
+    if "..." not in quote and "…" not in quote:
+        return quote in body
+
+    fragments = [fragment.strip() for fragment in re.split(r"\.\.\.|…", quote) if fragment.strip()]
+    if not fragments:
+        return False
+
+    return all(fragment in body for fragment in fragments)
 
 
 def require_step(body: str, step_number: int) -> str:
@@ -417,6 +476,65 @@ def validate_untrusted_content(body: str) -> None:
         fail("T70", "Input handling section must not contain placeholder or TODO")
 
 
+def validate_fixture(path: Path, expected_kind: str) -> tuple[str, str, list[dict[str, object]]]:
+    frontmatter, body = parse_fixture(path, "T71")
+    fixture_name = path.relative_to(ROOT)
+
+    kind = frontmatter.get("kind")
+    if kind != expected_kind:
+        fail("T72", f"{fixture_name} kind must equal {expected_kind}")
+
+    rating = frontmatter.get("expected_rating")
+    if rating not in RATING_BANDS:
+        fail("T73", f"{fixture_name} expected_rating must be one of the canonical bands")
+
+    findings = frontmatter.get("expected_findings")
+    if not isinstance(findings, list):
+        fail("T74", f"{fixture_name} expected_findings must be a list")
+
+    normalized_findings = []
+    for index, finding in enumerate(findings, start=1):
+        if not isinstance(finding, dict):
+            fail("T76", f"{fixture_name} finding {index} must be a YAML mapping")
+
+        dimension = finding.get("dimension")
+        severity = finding.get("severity")
+        quote = finding.get("quote")
+        if dimension not in DIMENSION_LABELS:
+            fail("T76", f"{fixture_name} finding {index} dimension must use a canonical label")
+        if severity not in SEVERITIES:
+            fail("T76", f"{fixture_name} finding {index} severity must be High, Medium, or Low")
+        if not isinstance(quote, str) or not quote.strip():
+            fail("T77", f"{fixture_name} finding {index} quote must be a non-empty string")
+        if not quote_is_locatable(quote, body):
+            fail("T77", f"{fixture_name} finding {index} quote is not locatable in the body")
+
+        normalized_findings.append(finding)
+
+    return str(kind), str(rating), normalized_findings
+
+
+def validate_fixtures() -> None:
+    misleading_kind, misleading_rating, misleading_findings = validate_fixture(MISLEADING_FIXTURE_PATH, "misleading")
+    credible_kind, credible_rating, credible_findings = validate_fixture(CREDIBLE_FIXTURE_PATH, "credible")
+
+    if misleading_kind != "misleading" or credible_kind != "credible":
+        fail("T72", "fixture kinds must be misleading and credible")
+
+    if misleading_rating not in LOW_RATING_BANDS:
+        fail("T75", "misleading fixture expected_rating must be a low band")
+    if credible_rating not in HIGH_RATING_BANDS:
+        fail("T75", "credible fixture expected_rating must be a high band")
+
+    if len(misleading_findings) < 3:
+        fail("T78", "misleading fixture must include at least three expected findings")
+    misleading_dimensions = {finding["dimension"] for finding in misleading_findings}
+    if len(misleading_dimensions) < 2:
+        fail("T78", "misleading fixture must span at least two distinct dimensions")
+    if credible_findings:
+        fail("T78", "credible fixture must have exactly zero expected findings")
+
+
 def main() -> int:
     frontmatter, body = parse_skill()
 
@@ -485,6 +603,8 @@ def main() -> int:
             fail("T15", f"{step_name} step must not contain placeholder or TODO")
         if "references/output-format.md" not in step_text:
             fail("T15", f"{step_name} step must reference references/output-format.md")
+
+    validate_fixtures()
 
     print("fake-news-detector skill scaffold validation passed")
     return 0
