@@ -8,6 +8,8 @@
 
 # Output Template
 
+Format each finding according to the per-finding rules in `references/findings-format.md`.
+
 ```markdown
 ## Verdict
 
@@ -16,8 +18,6 @@
 <One-sentence plain-language takeaway.>
 
 ## Findings
-
-Format each finding according to the per-finding rules in `references/findings-format.md`.
 
 <!-- If there are findings, list one item per issue and OMIT the empty-state line below: -->
 
