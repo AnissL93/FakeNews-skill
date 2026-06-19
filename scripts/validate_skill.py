@@ -42,11 +42,13 @@ OMISSION_MARKER = "(no quotable excerpt \u2014 omission)"
 
 
 def fail(check: str, message: str) -> None:
+    """Print a validation failure for a check and terminate the run."""
     print(f"{check} failed: {message}", file=sys.stderr)
     raise SystemExit(1)
 
 
 def parse_skill() -> tuple[dict[str, object], str]:
+    """Read SKILL.md and return its frontmatter mapping and body text."""
     if not SKILL_PATH.is_file():
         fail("T1", f"{SKILL_PATH.relative_to(ROOT)} is missing")
 
@@ -70,6 +72,7 @@ def parse_skill() -> tuple[dict[str, object], str]:
 
 
 def parse_fixture(path: Path, check: str) -> tuple[dict[str, object], str]:
+    """Read a fixture file and return its frontmatter mapping and article body."""
     if not path.is_file():
         fail(check, f"{path.relative_to(ROOT)} is missing")
 
@@ -99,6 +102,7 @@ def parse_fixture(path: Path, check: str) -> tuple[dict[str, object], str]:
 
 
 def quote_is_locatable(quote: str, body: str) -> bool:
+    """Return whether a quote or ellipsis-trimmed quote can be found in the body."""
     if quote == OMISSION_MARKER:
         return True
 
@@ -113,6 +117,7 @@ def quote_is_locatable(quote: str, body: str) -> bool:
 
 
 def require_step(body: str, step_number: int) -> str:
+    """Return a numbered workflow step from the skill body or fail validation."""
     match = re.search(rf"^\s*{step_number}\.\s+(.+)$", body, flags=re.MULTILINE)
     if not match:
         fail("T15", f"workflow step {step_number} is missing")
@@ -120,6 +125,7 @@ def require_step(body: str, step_number: int) -> str:
 
 
 def require_section(body: str, heading_pattern: str, check: str) -> str:
+    """Return a markdown section matching a heading pattern or fail validation."""
     match = re.search(
         rf"^#{{1,6}}\s+[^\n]*{heading_pattern}[^\n]*\n(.*?)(?=^#{{1,6}}\s+|\Z)",
         body,
@@ -131,6 +137,7 @@ def require_section(body: str, heading_pattern: str, check: str) -> str:
 
 
 def extract_section(text: str, heading_pattern: str) -> str:
+    """Extract a markdown section body by heading pattern, returning empty text if absent."""
     match = re.search(
         rf"^#{{1,6}}\s+[^\n]*{heading_pattern}[^\n]*\n(.*?)(?=^#{{1,6}}\s+|\Z)",
         text,
@@ -140,6 +147,7 @@ def extract_section(text: str, heading_pattern: str) -> str:
 
 
 def extract_bold_bullet_labels(section: str) -> set[str]:
+    """Return bold labels from markdown bullet items in a section."""
     return {
         match.group(1).strip()
         for match in re.finditer(r"^\s*[-*]\s+\*\*([^*\n]+)\*\*", section, flags=re.MULTILINE)
@@ -147,6 +155,7 @@ def extract_bold_bullet_labels(section: str) -> set[str]:
 
 
 def validate_output_format() -> None:
+    """Validate the rating scale, output markers, and quote rules reference."""
     if not OUTPUT_FORMAT_PATH.is_file():
         fail("T10", f"{OUTPUT_FORMAT_PATH.relative_to(ROOT)} is missing")
 
@@ -180,6 +189,7 @@ def validate_output_format() -> None:
 
 
 def validate_factual_red_flags() -> None:
+    """Validate the factual red-flag detection reference."""
     if not FACTUAL_RED_FLAGS_PATH.is_file():
         fail("T16", f"{FACTUAL_RED_FLAGS_PATH.relative_to(ROOT)} is missing")
 
@@ -207,6 +217,7 @@ def validate_factual_red_flags() -> None:
 
 
 def validate_bias_framing() -> None:
+    """Validate the bias and framing detection reference."""
     if not BIAS_FRAMING_PATH.is_file():
         fail("T22", f"{BIAS_FRAMING_PATH.relative_to(ROOT)} is missing")
 
@@ -234,6 +245,7 @@ def validate_bias_framing() -> None:
 
 
 def validate_logical_fallacies() -> None:
+    """Validate the logical fallacy detection reference."""
     if not LOGICAL_FALLACIES_PATH.is_file():
         fail("T28", f"{LOGICAL_FALLACIES_PATH.relative_to(ROOT)} is missing")
 
@@ -261,6 +273,7 @@ def validate_logical_fallacies() -> None:
 
 
 def validate_clickbait_hype() -> None:
+    """Validate the clickbait and hype detection reference."""
     if not CLICKBAIT_HYPE_PATH.is_file():
         fail("T34", f"{CLICKBAIT_HYPE_PATH.relative_to(ROOT)} is missing")
 
@@ -288,6 +301,7 @@ def validate_clickbait_hype() -> None:
 
 
 def validate_narrative_manipulation() -> None:
+    """Validate the narrative manipulation detection reference."""
     if not NARRATIVE_MANIPULATION_PATH.is_file():
         fail("T40", f"{NARRATIVE_MANIPULATION_PATH.relative_to(ROOT)} is missing")
 
@@ -315,6 +329,7 @@ def validate_narrative_manipulation() -> None:
 
 
 def validate_findings_format(body: str, render_step: str) -> None:
+    """Validate per-finding format rules and their wiring from SKILL.md."""
     if not FINDINGS_FORMAT_PATH.is_file():
         fail("T46", f"{FINDINGS_FORMAT_PATH.relative_to(ROOT)} is missing")
 
@@ -372,6 +387,7 @@ def validate_findings_format(body: str, render_step: str) -> None:
 
 
 def validate_scoring(score_step: str) -> None:
+    """Validate credibility scoring and rationale synthesis rules."""
     if not SCORING_PATH.is_file():
         fail("T53", f"{SCORING_PATH.relative_to(ROOT)} is missing")
 
@@ -415,6 +431,7 @@ def validate_scoring(score_step: str) -> None:
 
 
 def validate_summary_format(render_step: str) -> None:
+    """Validate the user-friendly verdict summary reference and render step wiring."""
     if not SUMMARY_FORMAT_PATH.is_file():
         fail("T59", f"{SUMMARY_FORMAT_PATH.relative_to(ROOT)} is missing")
 
@@ -459,6 +476,7 @@ def validate_summary_format(render_step: str) -> None:
 
 
 def validate_untrusted_content(body: str) -> None:
+    """Validate prompt-injection hardening and untrusted-content handling."""
     if not UNTRUSTED_CONTENT_PATH.is_file():
         fail("T65", f"{UNTRUSTED_CONTENT_PATH.relative_to(ROOT)} is missing")
 
@@ -493,6 +511,7 @@ def validate_untrusted_content(body: str) -> None:
 
 
 def validate_fixture(path: Path, expected_kind: str) -> tuple[str, str, list[dict[str, object]], str, str]:
+    """Validate one sample fixture and return its normalized expected metadata."""
     frontmatter, body = parse_fixture(path, "T71")
     fixture_name = path.relative_to(ROOT)
 
@@ -534,6 +553,7 @@ def validate_fixtures() -> tuple[
     tuple[str, str, list[dict[str, object]], str, str],
     tuple[str, str, list[dict[str, object]], str, str],
 ]:
+    """Validate the misleading and credible fixtures as a paired acceptance set."""
     misleading = validate_fixture(MISLEADING_FIXTURE_PATH, "misleading")
     credible = validate_fixture(CREDIBLE_FIXTURE_PATH, "credible")
     misleading_kind, misleading_rating, misleading_findings, _, _ = misleading
@@ -562,6 +582,7 @@ def validate_fixture_acceptance(
     misleading: tuple[str, str, list[dict[str, object]], str, str],
     credible: tuple[str, str, list[dict[str, object]], str, str],
 ) -> None:
+    """Validate fixture vocabulary, quote evidence, flags, and rating expectations."""
     output_text = OUTPUT_FORMAT_PATH.read_text(encoding="utf-8")
     findings_text = FINDINGS_FORMAT_PATH.read_text(encoding="utf-8")
     documented_rating_bands = extract_bold_bullet_labels(extract_section(output_text, r"(?:rating|scale)"))
@@ -606,6 +627,7 @@ def validate_fixture_acceptance(
 
 
 def main() -> int:
+    """Run all fake-news-detector skill validation checks."""
     frontmatter, body = parse_skill()
 
     if frontmatter.get("name") != "fake-news-detector":
