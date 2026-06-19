@@ -11,6 +11,7 @@ Use `references/scoring.md` to aggregate formatted findings into exactly one of 
 # Output Template
 
 Format each finding according to the per-finding rules in `references/findings-format.md`.
+Render the top `## Verdict` section as the user-friendly summary described in `references/summary-format.md`.
 
 ```markdown
 ## Verdict
@@ -18,6 +19,8 @@ Format each finding according to the per-finding rules in `references/findings-f
 **Rating:** <Credible | Mostly Credible | Mixed | Low Credibility | Not Credible>
 
 <One-sentence plain-language takeaway.>
+
+**Bottom line:** <Plain-language main reason(s) for the verdict, led by the most serious findings; for a clean Credible result, briefly state that no significant issues were found.>
 
 ## Findings
 
