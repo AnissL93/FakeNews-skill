@@ -1,0 +1,37 @@
+# Polis pipeline configuration.
+# Backends limited to the two authorized for this repo: claude + codex.
+
+backends:
+  claude:
+    harness: claude
+    model: claude-opus-4-8
+  codex-gpt:
+    harness: codex
+    model: gpt-5-codex
+
+# Global default backend, then per-role overrides.
+defaults:
+  backend: claude
+roles:
+  architect: { backend: claude }
+  spec:      { backend: claude }
+  code:      { backend: codex-gpt }
+  fix:       { backend: claude }
+
+# Review loop: 3 rounds, one claude reviewer + one codex reviewer.
+review:
+  max_rounds: 3
+  reviewers:
+    - { persona: reviewer-correctness, backend: claude }
+    - { persona: reviewer-design,      backend: codex-gpt }
+
+# Optional named review profiles, triggerable via label suffix
+# e.g. agent:code_review:thorough
+review_profiles:
+  quick:
+    mode: comment
+    reviewers: [ { backend: claude } ]
+  thorough:
+    mode: iterate
+    max_rounds: 3
+    reviewers: [ { backend: claude }, { backend: codex-gpt } ]
