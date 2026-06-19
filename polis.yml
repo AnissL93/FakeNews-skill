@@ -7,7 +7,8 @@ backends:
     model: claude-opus-4-8
   codex-gpt:
     harness: codex
-    model: gpt-5-codex
+    # No explicit model: gpt-5-codex is API-key-only and rejected by ChatGPT-account
+    # logins (CODEX_AUTH). Omitting it uses the default model the account supports.
 
 # Global default backend, then per-role overrides.
 defaults:
