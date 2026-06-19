@@ -17,8 +17,12 @@
 
 ## Findings
 
+<!-- If there are findings, list one item per issue and OMIT the empty-state line below: -->
+
 - **<Dimension> (<Severity>):** "<verbatim quote from the input>"
   <One-line explanation of the issue.>
+
+<!-- Otherwise, when there are no findings, drop the list above and emit only this line: -->
 
 No significant issues found.
 
