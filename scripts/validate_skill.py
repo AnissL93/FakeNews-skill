@@ -15,6 +15,7 @@ SKILL_ROOT = ROOT / ".claude" / "skills" / "fake-news-detector"
 SKILL_PATH = SKILL_ROOT / "SKILL.md"
 OUTPUT_FORMAT_PATH = SKILL_ROOT / "references" / "output-format.md"
 FACTUAL_RED_FLAGS_PATH = SKILL_ROOT / "references" / "factual-red-flags.md"
+BIAS_FRAMING_PATH = SKILL_ROOT / "references" / "bias-framing.md"
 
 
 def fail(check: str, message: str) -> None:
@@ -112,6 +113,33 @@ def validate_factual_red_flags() -> None:
         fail("T20", "factual-red-flags.md must name the Factual red flag dimension label")
 
 
+def validate_bias_framing() -> None:
+    if not BIAS_FRAMING_PATH.is_file():
+        fail("T22", f"{BIAS_FRAMING_PATH.relative_to(ROOT)} is missing")
+
+    text = BIAS_FRAMING_PATH.read_text(encoding="utf-8")
+    if not text.strip():
+        fail("T22", f"{BIAS_FRAMING_PATH.relative_to(ROOT)} is empty")
+
+    if not re.search(r"^#{1,6}\s+.*(?:bias|framing).*$", text, flags=re.IGNORECASE | re.MULTILINE):
+        fail("T23", "bias-framing.md must contain a bias or framing heading")
+
+    signal_entries = re.findall(r"^\s*(?:[-*]\s+\S|#{2,6}\s+\S)", text, flags=re.MULTILINE)
+    if len(signal_entries) < 6:
+        fail("T24", "bias-framing.md must enumerate at least six signal entries")
+
+    if not re.search(r"\bexample\b", text, flags=re.IGNORECASE):
+        fail("T25", "bias-framing.md must include at least one concrete example")
+
+    text_lower = text.lower()
+    if "verbatim" not in text_lower or "quote" not in text_lower:
+        fail("T26", "bias-framing.md must require a verbatim quote")
+    if "severity" not in text_lower:
+        fail("T26", "bias-framing.md must mention severity")
+    if "bias & framing" not in text_lower:
+        fail("T26", "bias-framing.md must name the Bias & framing dimension label")
+
+
 def main() -> int:
     frontmatter, body = parse_skill()
 
@@ -144,6 +172,7 @@ def main() -> int:
 
     validate_output_format()
     validate_factual_red_flags()
+    validate_bias_framing()
 
     if "references/output-format.md" not in body:
         fail("T15", "SKILL.md must reference references/output-format.md")
@@ -157,6 +186,10 @@ def main() -> int:
         fail("T21", "detection step must reference references/factual-red-flags.md")
     if not re.search(r"\b(placeholder|todo)\b", detection_step, flags=re.IGNORECASE):
         fail("T21", "detection step must keep a placeholder or TODO for remaining dimensions")
+    if "references/bias-framing.md" not in detection_step:
+        fail("T27", "detection step must reference references/bias-framing.md")
+    if not re.search(r"\b(placeholder|todo)\b", detection_step, flags=re.IGNORECASE):
+        fail("T27", "detection step must keep a placeholder or TODO for remaining dimensions")
     for step_name, step_text in (("score/aggregate", score_step), ("render-verdict", render_step)):
         if re.search(r"\b(placeholder|todo)\b", step_text, flags=re.IGNORECASE):
             fail("T15", f"{step_name} step must not contain placeholder or TODO")
