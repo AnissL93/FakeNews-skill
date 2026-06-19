@@ -130,6 +130,22 @@ def require_section(body: str, heading_pattern: str, check: str) -> str:
     return match.group(0)
 
 
+def extract_section(text: str, heading_pattern: str) -> str:
+    match = re.search(
+        rf"^#{{1,6}}\s+[^\n]*{heading_pattern}[^\n]*\n(.*?)(?=^#{{1,6}}\s+|\Z)",
+        text,
+        flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
+    )
+    return match.group(1) if match else ""
+
+
+def extract_bold_bullet_labels(section: str) -> set[str]:
+    return {
+        match.group(1).strip()
+        for match in re.finditer(r"^\s*[-*]\s+\*\*([^*\n]+)\*\*", section, flags=re.MULTILINE)
+    }
+
+
 def validate_output_format() -> None:
     if not OUTPUT_FORMAT_PATH.is_file():
         fail("T10", f"{OUTPUT_FORMAT_PATH.relative_to(ROOT)} is missing")
@@ -476,7 +492,7 @@ def validate_untrusted_content(body: str) -> None:
         fail("T70", "Input handling section must not contain placeholder or TODO")
 
 
-def validate_fixture(path: Path, expected_kind: str) -> tuple[str, str, list[dict[str, object]]]:
+def validate_fixture(path: Path, expected_kind: str) -> tuple[str, str, list[dict[str, object]], str, str]:
     frontmatter, body = parse_fixture(path, "T71")
     fixture_name = path.relative_to(ROOT)
 
@@ -511,12 +527,17 @@ def validate_fixture(path: Path, expected_kind: str) -> tuple[str, str, list[dic
 
         normalized_findings.append(finding)
 
-    return str(kind), str(rating), normalized_findings
+    return str(kind), str(rating), normalized_findings, body, str(fixture_name)
 
 
-def validate_fixtures() -> None:
-    misleading_kind, misleading_rating, misleading_findings = validate_fixture(MISLEADING_FIXTURE_PATH, "misleading")
-    credible_kind, credible_rating, credible_findings = validate_fixture(CREDIBLE_FIXTURE_PATH, "credible")
+def validate_fixtures() -> tuple[
+    tuple[str, str, list[dict[str, object]], str, str],
+    tuple[str, str, list[dict[str, object]], str, str],
+]:
+    misleading = validate_fixture(MISLEADING_FIXTURE_PATH, "misleading")
+    credible = validate_fixture(CREDIBLE_FIXTURE_PATH, "credible")
+    misleading_kind, misleading_rating, misleading_findings, _, _ = misleading
+    credible_kind, credible_rating, credible_findings, _, _ = credible
 
     if misleading_kind != "misleading" or credible_kind != "credible":
         fail("T72", "fixture kinds must be misleading and credible")
@@ -533,6 +554,55 @@ def validate_fixtures() -> None:
         fail("T78", "misleading fixture must span at least two distinct dimensions")
     if credible_findings:
         fail("T78", "credible fixture must have exactly zero expected findings")
+
+    return misleading, credible
+
+
+def validate_fixture_acceptance(
+    misleading: tuple[str, str, list[dict[str, object]], str, str],
+    credible: tuple[str, str, list[dict[str, object]], str, str],
+) -> None:
+    output_text = OUTPUT_FORMAT_PATH.read_text(encoding="utf-8")
+    findings_text = FINDINGS_FORMAT_PATH.read_text(encoding="utf-8")
+    documented_rating_bands = extract_bold_bullet_labels(extract_section(output_text, r"(?:rating|scale)"))
+    documented_dimension_labels = extract_bold_bullet_labels(extract_section(findings_text, r"dimension labels"))
+
+    for _, rating, findings, _, fixture_name in (misleading, credible):
+        if rating not in documented_rating_bands:
+            fail("T79", f"{fixture_name} vocabulary axis: expected_rating is absent from references/output-format.md")
+        for index, finding in enumerate(findings, start=1):
+            dimension = finding["dimension"]
+            if dimension not in documented_dimension_labels:
+                fail(
+                    "T79",
+                    f"{fixture_name} vocabulary axis: finding {index} dimension is absent from references/findings-format.md",
+                )
+
+    _, misleading_rating, misleading_findings, misleading_body, misleading_name = misleading
+    _, credible_rating, credible_findings, _, credible_name = credible
+
+    if not misleading_findings:
+        fail("T80", f"{misleading_name} flags axis: misleading fixture must include at least one expected finding")
+    if credible_findings:
+        fail("T80", f"{credible_name} flags axis: credible fixture must have exactly zero expected findings")
+
+    for index, finding in enumerate(misleading_findings, start=1):
+        quote = finding.get("quote")
+        if not isinstance(quote, str) or not quote.strip():
+            fail("T81", f"{misleading_name} quotes axis: finding {index} quote must be non-empty")
+        if quote != OMISSION_MARKER and not quote_is_locatable(quote, misleading_body):
+            fail("T81", f"{misleading_name} quotes axis: finding {index} quote is not verbatim-locatable")
+
+    misleading_has_flags = bool(misleading_findings)
+    credible_has_flags = bool(credible_findings)
+    if misleading_rating not in LOW_RATING_BANDS:
+        fail("T82", f"{misleading_name} rating axis: misleading fixture has flags but a high-band rating")
+    if credible_rating not in HIGH_RATING_BANDS:
+        fail("T82", f"{credible_name} rating axis: credible fixture is clean but has a low-band rating")
+    if misleading_has_flags != (misleading_rating in LOW_RATING_BANDS):
+        fail("T82", f"{misleading_name} rating axis: flag count is inconsistent with expected_rating")
+    if credible_has_flags == (credible_rating in HIGH_RATING_BANDS):
+        fail("T82", f"{credible_name} rating axis: flag count is inconsistent with expected_rating")
 
 
 def main() -> int:
@@ -604,7 +674,8 @@ def main() -> int:
         if "references/output-format.md" not in step_text:
             fail("T15", f"{step_name} step must reference references/output-format.md")
 
-    validate_fixtures()
+    fixtures = validate_fixtures()
+    validate_fixture_acceptance(*fixtures)
 
     print("fake-news-detector skill scaffold validation passed")
     return 0
