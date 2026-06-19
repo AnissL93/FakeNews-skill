@@ -20,6 +20,7 @@ LOGICAL_FALLACIES_PATH = SKILL_ROOT / "references" / "logical-fallacies.md"
 CLICKBAIT_HYPE_PATH = SKILL_ROOT / "references" / "clickbait-hype.md"
 NARRATIVE_MANIPULATION_PATH = SKILL_ROOT / "references" / "narrative-manipulation.md"
 FINDINGS_FORMAT_PATH = SKILL_ROOT / "references" / "findings-format.md"
+SCORING_PATH = SKILL_ROOT / "references" / "scoring.md"
 
 
 def fail(check: str, message: str) -> None:
@@ -282,6 +283,45 @@ def validate_findings_format(body: str, render_step: str) -> None:
         fail("T52", "output-format.md Findings section must point to references/findings-format.md")
 
 
+def validate_scoring(score_step: str) -> None:
+    if not SCORING_PATH.is_file():
+        fail("T53", f"{SCORING_PATH.relative_to(ROOT)} is missing")
+
+    text = SCORING_PATH.read_text(encoding="utf-8")
+    if not text.strip():
+        fail("T53", f"{SCORING_PATH.relative_to(ROOT)} is empty")
+
+    if not re.search(r"^#{1,6}\s+.*(?:scor|aggregat|rating).*$", text, flags=re.IGNORECASE | re.MULTILINE):
+        fail("T54", "scoring.md must contain a scoring, aggregation, or rating heading")
+
+    for band in ("Credible", "Mostly Credible", "Mixed", "Low Credibility", "Not Credible"):
+        if not re.search(rf"\b{re.escape(band)}\b", text, flags=re.IGNORECASE):
+            fail("T55", f"scoring.md must map the {band} band")
+
+    for severity in ("High", "Medium", "Low"):
+        if not re.search(rf"\b{severity}\b", text, flags=re.IGNORECASE):
+            fail("T56", f"scoring.md must reference {severity} severity")
+
+    text_lower = text.lower()
+    if "rationale" not in text_lower:
+        fail("T57", "scoring.md must define rationale-synthesis rules")
+    if not any(term in text_lower for term in ("consistent", "no new", "not introduce", "only")):
+        fail("T57", "scoring.md must state no-new-claims or consistency discipline")
+    if "example" not in text_lower:
+        fail("T57", "scoring.md must include a worked example")
+
+    if "references/scoring.md" not in score_step:
+        fail("T58", "score/aggregate step must reference references/scoring.md")
+    if "references/output-format.md" not in score_step:
+        fail("T58", "score/aggregate step must reference references/output-format.md")
+    if re.search(r"\b(placeholder|todo)\b", score_step, flags=re.IGNORECASE):
+        fail("T58", "score/aggregate step must not contain placeholder or TODO")
+
+    output_text = OUTPUT_FORMAT_PATH.read_text(encoding="utf-8")
+    if "references/scoring.md" not in output_text:
+        fail("T58", "output-format.md rating scale must point to references/scoring.md")
+
+
 def main() -> int:
     frontmatter, body = parse_skill()
 
@@ -324,6 +364,7 @@ def main() -> int:
     score_step = require_step(body, 3)
     render_step = require_step(body, 4)
     validate_findings_format(body, render_step)
+    validate_scoring(score_step)
     if "references/factual-red-flags.md" not in detection_step:
         fail("T21", "detection step must reference references/factual-red-flags.md")
     if "references/bias-framing.md" not in detection_step:
