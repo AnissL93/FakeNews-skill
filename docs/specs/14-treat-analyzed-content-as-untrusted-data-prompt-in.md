@@ -136,5 +136,3 @@ unchanged.
       (owned by #5–#13 and the remaining Phase 4 issues).
 - [ ] `bash scripts/test.sh` runs the structural validation (including new
       T65–T70) and exits 0; it is the authoritative command.
-</content>
-</invoke>

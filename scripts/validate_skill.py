@@ -395,7 +395,7 @@ def validate_untrusted_content(body: str) -> None:
         fail("T66", "untrusted-content.md must contain an untrusted/injection/data heading")
 
     text_lower = text.lower()
-    follow_terms = ("never follow", "not follow", "do not follow", "never obey", "ignore", "inert")
+    follow_terms = ("never follow", "not follow", "do not follow", "never obey", "inert")
     if "instruction" not in text_lower or not any(term in text_lower for term in follow_terms):
         fail("T67", "untrusted-content.md must state that embedded instructions are data and not followed")
 
