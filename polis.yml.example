@@ -1,0 +1,51 @@
+# Polis pipeline configuration — copy to `polis.yml` to customize.
+# With NO polis.yml, the pipeline runs claude everywhere, 3 review rounds, and the
+# reviewer-correctness + reviewer-design reviewers (identical to the pre-config default).
+
+# Named backends: harness + optional model + optional endpoint/credential.
+backends:
+  claude:                          # built-in; listed here only to set a model
+    harness: claude                # claude | codex | aider
+    model: claude-opus-4-8         # optional; omit to use the harness default
+  codex-gpt:
+    harness: codex
+    model: gpt-5-codex
+  deepseek:
+    harness: aider                 # aider = universal (litellm): DeepSeek, Ollama, etc.
+    model: deepseek/deepseek-chat
+    api_key_env: DEEPSEEK_API_KEY  # add the secret in repo Settings, and a matching
+                                   # env line in .github/workflows/agent-pipeline.yml
+  local-qwen:
+    harness: aider
+    model: ollama/qwen2.5-coder
+    base_url: http://localhost:11434   # only reachable with a self-hosted runner (feature #1)
+
+# Global default backend, then per-role overrides.
+defaults:
+  backend: claude
+roles:
+  architect: { backend: claude }
+  spec:      { backend: claude }
+  code:      { backend: codex-gpt }
+  fix:       { backend: claude }
+
+# Review loop: number of rounds + an arbitrary list of independently-backed reviewers.
+review:
+  max_rounds: 3
+  reviewers:
+    - { persona: reviewer-correctness, backend: claude }
+    - { persona: reviewer-design,      backend: deepseek }
+
+# Review modes & named profiles (optional). The default code review is the `review:`
+# block above; `review.mode` is `iterate` (revise+re-review) unless set to `comment`.
+# Trigger a profile or a single backend with a label suffix, e.g.
+#   agent:code_review:thorough   agent:spec_review:codex   agent:arch_review
+# bootstrap-labels.sh creates one label per configured backend and per valid profile.
+review_profiles:
+  quick:                         # post comments and stop
+    mode: comment
+    reviewers: [ { backend: claude } ]
+  thorough:                      # revise + re-review, two backends
+    mode: iterate
+    max_rounds: 3
+    reviewers: [ { backend: codex-gpt }, { backend: deepseek } ]
