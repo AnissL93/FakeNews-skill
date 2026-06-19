@@ -294,12 +294,16 @@ def validate_scoring(score_step: str) -> None:
     if not re.search(r"^#{1,6}\s+.*(?:scor|aggregat|rating).*$", text, flags=re.IGNORECASE | re.MULTILINE):
         fail("T54", "scoring.md must contain a scoring, aggregation, or rating heading")
 
+    # Match each band as a bold token so e.g. **Credible** is not satisfied by
+    # the "Credible" substring inside **Not Credible** / **Mostly Credible**.
     for band in ("Credible", "Mostly Credible", "Mixed", "Low Credibility", "Not Credible"):
-        if not re.search(rf"\b{re.escape(band)}\b", text, flags=re.IGNORECASE):
+        if not re.search(rf"\*\*{re.escape(band)}\*\*", text, flags=re.IGNORECASE):
             fail("T55", f"scoring.md must map the {band} band")
 
+    # Match each severity as an explicit input token (`Low` or (Low):) so it is
+    # not satisfied by the "Low" substring inside the Low Credibility band.
     for severity in ("High", "Medium", "Low"):
-        if not re.search(rf"\b{severity}\b", text, flags=re.IGNORECASE):
+        if not re.search(rf"(?:`{severity}`|\({severity}[):])", text, flags=re.IGNORECASE):
             fail("T56", f"scoring.md must reference {severity} severity")
 
     text_lower = text.lower()
