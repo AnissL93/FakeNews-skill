@@ -21,6 +21,7 @@ CLICKBAIT_HYPE_PATH = SKILL_ROOT / "references" / "clickbait-hype.md"
 NARRATIVE_MANIPULATION_PATH = SKILL_ROOT / "references" / "narrative-manipulation.md"
 FINDINGS_FORMAT_PATH = SKILL_ROOT / "references" / "findings-format.md"
 SCORING_PATH = SKILL_ROOT / "references" / "scoring.md"
+SUMMARY_FORMAT_PATH = SKILL_ROOT / "references" / "summary-format.md"
 
 
 def fail(check: str, message: str) -> None:
@@ -326,6 +327,50 @@ def validate_scoring(score_step: str) -> None:
         fail("T58", "output-format.md rating scale must point to references/scoring.md")
 
 
+def validate_summary_format(render_step: str) -> None:
+    if not SUMMARY_FORMAT_PATH.is_file():
+        fail("T59", f"{SUMMARY_FORMAT_PATH.relative_to(ROOT)} is missing")
+
+    text = SUMMARY_FORMAT_PATH.read_text(encoding="utf-8")
+    if not text.strip():
+        fail("T59", f"{SUMMARY_FORMAT_PATH.relative_to(ROOT)} is empty")
+
+    if not re.search(r"^#{1,6}\s+.*(?:summary|verdict|takeaway).*$", text, flags=re.IGNORECASE | re.MULTILINE):
+        fail("T60", "summary-format.md must contain a summary, verdict, or takeaway heading")
+
+    text_lower = text.lower()
+    has_breakdown_reference = (
+        ("findings" in text_lower and "rationale" in text_lower)
+        or "detailed breakdown" in text_lower
+    )
+    if not has_breakdown_reference or not any(term in text_lower for term in ("top", "above", "first")):
+        fail("T61", "summary-format.md must state that the summary sits at the top above the detailed breakdown")
+
+    if not any(term in text_lower for term in ("plain", "non-expert", "jargon", "lay")):
+        fail("T62", "summary-format.md must require plain, non-expert language")
+
+    if not any(term in text_lower for term in ("consistent", "no new", "not introduce")):
+        fail("T63", "summary-format.md must state the consistency or no-new-claims rule")
+    if "example" not in text_lower:
+        fail("T63", "summary-format.md must include a worked example")
+
+    for reference in (
+        "references/summary-format.md",
+        "references/output-format.md",
+        "references/findings-format.md",
+    ):
+        if reference not in render_step:
+            fail("T64", f"render step must reference {reference}")
+    if re.search(r"\b(placeholder|todo)\b", render_step, flags=re.IGNORECASE):
+        fail("T64", "render step must not contain placeholder or TODO")
+
+    output_text = OUTPUT_FORMAT_PATH.read_text(encoding="utf-8")
+    if "references/summary-format.md" not in output_text:
+        fail("T64", "output-format.md must point to references/summary-format.md")
+    if not re.search(r"\*\*Bottom line:\*\*", output_text, flags=re.IGNORECASE):
+        fail("T64", "output-format.md Verdict section must include a plain-language bottom-line line")
+
+
 def main() -> int:
     frontmatter, body = parse_skill()
 
@@ -369,6 +414,7 @@ def main() -> int:
     render_step = require_step(body, 4)
     validate_findings_format(body, render_step)
     validate_scoring(score_step)
+    validate_summary_format(render_step)
     if "references/factual-red-flags.md" not in detection_step:
         fail("T21", "detection step must reference references/factual-red-flags.md")
     if "references/bias-framing.md" not in detection_step:
