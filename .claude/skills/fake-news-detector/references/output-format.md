@@ -1,5 +1,7 @@
 # Credibility Rating Scale
 
+Use `references/scoring.md` to aggregate formatted findings into exactly one of these bands.
+
 - **Credible** - no material red flags; claims are sourced/verifiable in-text and framing is fair.
 - **Mostly Credible** - minor issues (mild framing, a weak source) that do not undermine the core.
 - **Mixed** - a blend of substantiated and unsupported/misleading elements; read with caution.
