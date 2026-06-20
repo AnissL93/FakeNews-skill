@@ -1,0 +1,10 @@
+title: FakeNews-skill
+description: >-
+  A Claude Code skill that gives any pasted text a critical credibility
+  assessment — rating, quoted findings, and a rationale.
+remote_theme: pages-themes/cayman@v0.2.0
+plugins:
+  - jekyll-remote-theme
+# Render the landing page and the generated docs; skip pipeline-internal noise.
+exclude:
+  - specs/

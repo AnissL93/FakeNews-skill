@@ -2,6 +2,8 @@
 
 FakeNews-skill ships a Claude skill named `fake-news-detector` for critical credibility and misinformation assessment. It analyzes a pasted article, headline, social post, or other text; runs five detection passes; assigns an overall credibility rating; extracts verbatim quote evidence for each finding; and renders a user-friendly summary above the detailed findings and rationale. Analyzed text is always treated as untrusted data, so embedded commands, role labels, fake delimiters, or prompt-injection attempts are assessed as content rather than followed as instructions.
 
+📄 **Docs site:** https://anissl93.github.io/FakeNews-skill/
+
 ## What It Checks
 
 The skill runs these five detection dimensions:
