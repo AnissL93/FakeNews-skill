@@ -42,15 +42,26 @@ status label awaiting a human) vs "in flight".
 | Current signal | Stage | Suggested next |
 |----------------|-------|----------------|
 | New issue, no PR, reads like a big idea | idea | `agent:arch` (plan) or `agent:spec` (single unit) |
-| `arch-review` label / open `arch/*` PR | arch drafted | `agent:rearch` (revise) or `agent:decompose` (make issues) |
+| `arch-review` label / open `arch/*` PR | arch drafted | `agent:revise-arch` (revise) or `agent:decompose` (make issues) |
 | Generated issue, no spec PR yet | ready to spec | `agent:spec` |
-| `spec-review` label / draft `agent/*` PR with a spec | spec drafted | `agent:respec` (revise) or `agent:code` (implement) |
-| Open `agent/*` PR, `needs-human-review`, tests passing | code ready | review feedback → **merge**, or `agent:fix` |
-| PR with `tests-failing` | tests red | `agent:fix` (no comment = make tests pass) |
-| PR with `agent:cap-reached` | review loop capped | read verdicts → `agent:fix`, or re-run AI review with `agent:code_review[:<profile>]`, or merge |
+| `spec-review` label / draft `agent/*` PR with a spec | spec drafted | `agent:revise-spec` (revise) or `agent:code` (implement) |
+| Open `agent/*` PR, `needs-human-review`, tests passing | code ready | review feedback → **merge**, or `agent:revise-code` |
+| PR with `tests-failing` | tests red | `agent:revise-code` (no comment = make tests pass) |
+| PR with `agent:cap-reached` | review loop capped | read verdicts → `agent:revise-code`, or re-run AI review with `agent:code_review[:<profile>]`, or merge |
 | `agent:failed` | run errored | `gh run view <id> --log-failed` to see the error, fix the cause, then re-apply the original trigger label |
 
 Always offer the on-demand review triggers too (next section).
+
+> **Reading `agent:failed` correctly.** Inspect the failed step before assuming the work was lost —
+> the failure is often benign and the code/spec already landed:
+> - **`open-pr` failed with "a pull request … already exists"** (older scaffolds before the
+>   `gh pr list --head` guard): the `agent:code` run pushed code and ran tests fine, but the
+>   `open-pr` step collided with the draft PR that `agent:spec` already opened, which skipped the
+>   AI review. The PR has the code. **Recover:** clear `agent:failed`, then run `agent:code_review`
+>   on the issue to get the review that was skipped (no re-implementation needed).
+> - **`Checkout the issue branch` failed** (`pathspec did not match`): `agent:code` was applied to an
+>   issue that never went through `agent:spec`, so the branch does not exist. **Recover:** clear
+>   `agent:failed`, run `agent:spec` first, then `agent:code`.
 
 ## Actions
 
@@ -59,8 +70,13 @@ The pipeline triggers on the **labeled** event, so adding the label is the trigg
 
 - **Kick off from an idea:** `gh issue create --title "<title>" --body "<idea>"`, then offer
   `agent:arch` or `agent:spec` on the new issue.
-- **Planning:** `agent:arch` / `agent:rearch` / `agent:decompose` (on the parent issue).
-- **Execution:** `agent:spec` / `agent:respec` / `agent:code` / `agent:fix` (on the generated issue).
+- **Planning:** `agent:arch` / `agent:revise-arch` / `agent:decompose` (on the parent issue).
+- **Execution:** `agent:spec` / `agent:revise-spec` / `agent:code` / `agent:revise-code` (on the generated issue). Under a non-`none` `resolve_policy`, the revise stage also replies to and resolves review threads automatically.
+  **`agent:spec` must run before `agent:code` on an issue** — the `spec` job creates the
+  `agent/<n>-<slug>` branch (`git checkout -b`); the `code` job only checks it out. Labelling a
+  never-spec'd issue `agent:code` fails at "Checkout the issue branch" (`pathspec did not match`)
+  and stamps `agent:failed`. There is no "code without spec" shortcut — recover by clearing
+  `agent:failed` and running `agent:spec` first.
 - **On-demand review:** `agent:code_review` / `agent:spec_review` / `agent:arch_review`, optionally
   with a `:<backend|profile>` suffix. Read the valid suffixes **from `polis.yml`** so you only offer
   real ones: list backend names under `backends:` (plus the built-in `claude`) and profile names

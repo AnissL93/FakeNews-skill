@@ -1,6 +1,9 @@
 # Polis pipeline configuration.
 # Backends limited to the two authorized for this repo: claude + codex.
 
+pipeline:
+  mode: auto   # removes manual label gates; advances spec→code, arch→decompose automatically
+
 backends:
   claude:
     harness: claude
