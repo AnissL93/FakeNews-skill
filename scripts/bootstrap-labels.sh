@@ -6,13 +6,19 @@ set -euo pipefail
 label() { gh label create "$1" --color "$2" --description "$3" --force; }
 
 # Trigger labels (human-applied)
-label "agent:arch"       "5319E7" "Planning: write architecture doc"
-label "agent:rearch"     "5319E7" "Revise architecture doc from human comments"
-label "agent:decompose"  "5319E7" "Materialize the approved breakdown into issues"
-label "agent:spec"       "1D76DB" "Execution: write spec for this issue"
-label "agent:respec"     "1D76DB" "Revise spec from human comments"
-label "agent:code"       "0E8A16" "Implement code + tests and run AI review"
-label "agent:fix"        "0E8A16" "Revise code from human comments"
+label "agent:arch"        "5319E7" "Planning: write architecture doc"
+label "agent:revise-arch" "5319E7" "Revise architecture doc from human comments"
+label "agent:decompose"   "5319E7" "Materialize the approved breakdown into issues"
+label "agent:spec"        "1D76DB" "Execution: write spec for this issue"
+label "agent:revise-spec" "1D76DB" "Revise spec from human comments"
+label "agent:code"        "0E8A16" "Implement code + tests and run AI review"
+label "agent:revise-code" "0E8A16" "Revise code from human comments"
+# Maintenance / triage labels (applied by /polis:maintain and humans; organizational, not triggers)
+label "bug"          "B60205" "Something is broken — defect to fix"
+label "enhancement"  "A2EEEF" "New feature or improvement request"
+label "feedback"     "C5DEF5" "User feedback or discussion to mine for direction"
+label "needs-triage" "EDEDED" "Awaiting triage by /polis:maintain or a human"
+label "stale"        "BFBFBF" "No activity for a long time — candidate to close"
 # Status labels (pipeline-applied)
 label "arch-review"        "FBCA04" "Architecture doc awaiting human review"
 label "spec-review"        "FBCA04" "Spec awaiting human review"

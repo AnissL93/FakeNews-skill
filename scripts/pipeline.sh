@@ -7,6 +7,7 @@ set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 AGENTS_DIR="${AGENTS_DIR:-$REPO_ROOT/.github/agents}"
+SKILLS_DIR="${SKILLS_DIR:-$REPO_ROOT/skills}"
 MAX_REVIEW_ROUNDS="${MAX_REVIEW_ROUNDS:-3}"
 POLIS_CONFIG="${POLIS_CONFIG:-$REPO_ROOT/polis.yml}"
 
@@ -63,6 +64,39 @@ cfg_max_rounds() {
 cfg_backends() {
   { cfg_present && yq -r '.backends // {} | keys | .[]' "$POLIS_CONFIG" 2>/dev/null
     echo claude; } | sort -u
+}
+
+# True iff a fine-grained auto behavior is enabled. key: advance_spec_to_code |
+# advance_arch_to_decompose | merge_when_green. Reads pipeline.auto.<key>; when unset,
+# derives from pipeline.mode (auto => true, else false). Built-in default is false.
+cfg_auto_mode() {
+  cfg_present || { echo human; return; }
+  local m; m="$(yq -r '.pipeline.mode // "human"' "$POLIS_CONFIG" 2>/dev/null)"
+  [[ "$m" == "auto" ]] && echo auto || echo human
+}
+cfg_auto_flag() {
+  local key="$1" v=""
+  if cfg_present; then
+    v="$(yq -r ".pipeline.auto.${key}" "$POLIS_CONFIG" 2>/dev/null)"
+    [[ "$v" == "null" ]] && v=""
+  fi
+  [[ -z "$v" ]] && { [[ "$(cfg_auto_mode)" == "auto" ]] && v=true || v=false; }
+  [[ "$v" == "true" ]]
+}
+
+# Resolve policy for the revise phase: none|all|ai-threads|fully-addressed.
+# Reads pipeline.auto.resolve_policy; when unset, 'all' in auto mode else 'none'.
+cfg_resolve_policy() {
+  local v=""
+  if cfg_present; then
+    v="$(yq -r '.pipeline.auto.resolve_policy // ""' "$POLIS_CONFIG" 2>/dev/null)"
+    [[ "$v" == "null" ]] && v=""
+  fi
+  [[ -z "$v" ]] && { [[ "$(cfg_auto_mode)" == "auto" ]] && v=all || v=none; }
+  case "$v" in
+    none|all|ai-threads|fully-addressed) echo "$v" ;;
+    *) echo "config error: pipeline.auto.resolve_policy must be one of none|all|ai-threads|fully-addressed, got '$v'" >&2; exit 1 ;;
+  esac
 }
 
 # True iff a review profile with this name is defined.
@@ -152,6 +186,39 @@ cfg_review_rounds() {
   _default_rounds "$artifact"
 }
 
+# When skills.auto is true, emit names of all skill directories already in SKILLS_DIR.
+# These were downloaded by install-harnesses.sh detect-skills.sh at job start.
+cfg_auto_skills() {
+  cfg_present || return 0
+  [[ "$(yq -r '.skills.auto // false' "$POLIS_CONFIG" 2>/dev/null)" == "true" ]] || return 0
+  [[ -d "$SKILLS_DIR" ]] || return 0
+  find "$SKILLS_DIR" -maxdepth 2 -name "SKILL.md" 2>/dev/null \
+    | sed "s|${SKILLS_DIR}/||; s|/SKILL.md||" | sort -u
+}
+
+# Skill names for a role: auto-detected + skills.global[] + skills.roles.<role>[], deduped.
+# Prints nothing when no skills are configured or polis.yml is absent.
+cfg_skills_for() {
+  local role="$1"
+  cfg_present || return 0
+  { cfg_auto_skills
+    yq -r '.skills.global // [] | .[]' "$POLIS_CONFIG" 2>/dev/null
+    yq -r ".skills.roles.\"${role}\" // [] | .[]" "$POLIS_CONFIG" 2>/dev/null
+  } | sort -u
+}
+
+# Build a system-prompt string from the SKILL.md files for a role's configured skills.
+# Returns the empty string when no skills are configured or no SKILL.md files exist.
+skills_system_prompt() {
+  local role="$1" out="" skill skill_file
+  while IFS= read -r skill; do
+    [[ -z "$skill" ]] && continue
+    skill_file="${SKILLS_DIR}/${skill}/SKILL.md"
+    [[ -f "$skill_file" ]] && out+="$(cat "$skill_file")"$'\n\n'
+  done < <(cfg_skills_for "$role")
+  printf '%s' "${out%$'\n\n'}"
+}
+
 slugify() {
   echo "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' | cut -c1-50
 }
@@ -163,6 +230,72 @@ remove_label() { gh issue edit "$ISSUE_NUMBER" --remove-label "$1" >/dev/null 2>
 pr_feedback() {
   gh pr view "$1" --json comments,reviews \
     --jq '[.reviews[]?.body, .comments[]?.body] | map(select(. != null and . != "")) | join("\n---\n")' 2>/dev/null || true
+}
+
+# Reply to (and per resolve_policy resolve) the unresolved review threads on a PR branch.
+# Best-effort polish: any missing data or failed call leaves the calling stage succeeding.
+reply_and_resolve() {
+  local branch="$1"
+  local owner="${REPO_OWNER}" repo="${REPO_NAME:-}"
+  local num; num="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number' 2>/dev/null || true)"
+  [[ -z "$num" ]] && return 0
+  local policy; policy="$(cfg_resolve_policy)"
+  [[ "$policy" == none ]] && return 0   # none = silent: no agent run, no replies, no resolves
+
+  # first:100 — not paginated; PRs with >100 unresolved threads drop the overflow
+  local q='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved comments(first:1){nodes{databaseId body author{login __typename}}}}}}}}'
+  local resp; resp="$(gh api graphql -f query="$q" -F owner="$owner" -F repo="$repo" -F number="$num" 2>/dev/null || true)"
+  [[ -z "$resp" ]] && return 0
+
+  # thread_id <TAB> reply_to_comment_id <TAB> author_typename <TAB> author_login <TAB> bodies
+  local threads; threads="$(printf '%s' "$resp" | jq -r '
+    .data.repository.pullRequest.reviewThreads.nodes[]
+    | select(.isResolved==false)
+    | [.id, (.comments.nodes[0].databaseId|tostring), .comments.nodes[0].author.__typename,
+       (.comments.nodes[0].author.login // ""), ([.comments.nodes[].body]|join(" || "))]
+    | @tsv' 2>/dev/null || true)"
+  [[ -z "$threads" ]] && return 0
+
+  # Resolve-agent prompt: the PR diff + each unresolved thread.
+  local prompt; prompt="A reviser just updated this PR for issue #${ISSUE_NUMBER}. Diff:
+$(git diff origin/main...HEAD 2>/dev/null || true)
+
+Unresolved review threads (thread_id: comment):
+"
+  local tid rid typ login body
+  while IFS=$'\t' read -r tid rid typ login body; do
+    [[ -n "$tid" ]] && prompt+="- ${tid}: ${body}"$'\n'
+  done <<< "$threads"
+  prompt+='
+Write ONLY the JSON array described in your instructions to /tmp/resolve.json — one entry per thread id above.'
+
+  rm -f /tmp/resolve.json
+  run_agent resolve resolver.md "$prompt" >/dev/null 2>&1 || true
+  [[ -s /tmp/resolve.json ]] || { note "💬 Resolve agent produced no output; review threads left unchanged." 2>/dev/null || true; return 0; }
+
+  local bot_login; bot_login="$(gh api user --jq .login 2>/dev/null || true)"
+  local replied=0 resolved=0 jid jreply jstatus meta do_resolve
+  while IFS=$'\t' read -r jid jreply jstatus; do
+    [[ -z "$jid" ]] && continue
+    meta="$(awk -F'\t' -v id="$jid" '$1==id{print; exit}' <<< "$threads")"
+    [[ -z "$meta" ]] && continue
+    IFS=$'\t' read -r tid rid typ login body <<< "$meta"
+    [[ -z "$rid" || "$rid" == null ]] && continue   # no usable comment id: skip reply AND resolve
+    gh api "repos/${owner}/${repo}/pulls/${num}/comments/${rid}/replies" -f body="$jreply" >/dev/null 2>&1 && replied=$((replied+1)) || true
+    do_resolve=false
+    case "$policy" in
+      all)             do_resolve=true ;;
+      ai-threads)      [[ "$typ" == "Bot" || ( -n "$bot_login" && "$login" == "$bot_login" ) ]] && do_resolve=true ;;
+      fully-addressed) [[ "$jstatus" == "addressed" ]] && do_resolve=true ;;
+      none)            do_resolve=false ;;
+    esac
+    if [[ "$do_resolve" == true ]]; then
+      gh api graphql -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}' -f id="$jid" >/dev/null 2>&1 && resolved=$((resolved+1)) || true
+    fi
+  done < <(jq -r '.[] | [.thread_id, .reply, .status] | @tsv' /tmp/resolve.json 2>/dev/null || true)
+
+  note "💬 **Comments answered** — replied to ${replied} thread(s), resolved ${resolved} (policy: \`${policy}\`)." 2>/dev/null || true
+  return 0
 }
 
 compute_vars() {
@@ -179,18 +312,19 @@ compute_vars() {
 # codex/aider get the persona prepended to the prompt.
 
 harness_claude() {
-  local persona="$1" model="$2"; shift 2
+  local persona="$1" model="$2" skills_prompt="$3"; shift 3
   local args=(-p "$*" --append-system-prompt "$(cat "$AGENTS_DIR/$persona")"
               --dangerously-skip-permissions --output-format text)
+  [[ -n "$skills_prompt" ]] && args+=(--append-system-prompt "$skills_prompt")
   [[ -n "$model" ]] && args+=(--model "$model")
   claude "${args[@]}"
 }
 
 harness_codex() {
-  local persona="$1" model="$2" base_url="$3" key_env="$4"; shift 4
-  local prompt; prompt="$(cat "$AGENTS_DIR/$persona")
-
-$*"
+  local persona="$1" model="$2" base_url="$3" key_env="$4" skills_prompt="$5"; shift 5
+  local prompt; prompt="$(cat "$AGENTS_DIR/$persona")"
+  [[ -n "$skills_prompt" ]] && prompt+=$'\n\n'"${skills_prompt}"
+  prompt+=$'\n\n'"$*"
   local args=(exec)
   [[ -n "$model" ]]    && args+=(--model "$model")
   [[ -n "$base_url" ]] && args+=(-c "model_providers.custom.base_url=$base_url")
@@ -199,10 +333,10 @@ $*"
 }
 
 harness_aider() {
-  local persona="$1" model="$2" base_url="$3" key_env="$4"; shift 4
-  local prompt; prompt="$(cat "$AGENTS_DIR/$persona")
-
-$*"
+  local persona="$1" model="$2" base_url="$3" key_env="$4" skills_prompt="$5"; shift 5
+  local prompt; prompt="$(cat "$AGENTS_DIR/$persona")"
+  [[ -n "$skills_prompt" ]] && prompt+=$'\n\n'"${skills_prompt}"
+  prompt+=$'\n\n'"$*"
   local args=(--message "$prompt" --yes --no-auto-commit)
   [[ -n "$model" ]] && args+=(--model "$model")
   [[ -n "$base_url" ]] && export OPENAI_API_BASE="$base_url"
@@ -210,20 +344,32 @@ $*"
 }
 
 # Dispatch a prompt to a named backend's harness.
+# skills_prompt (3rd arg) is injected into the system prompt (claude) or task prompt (codex/aider).
 dispatch_backend() {
-  local backend="$1" persona="$2"; shift 2
+  local backend="$1" persona="$2" skills_prompt="$3"; shift 3
   local harness model base_url key_env
   harness="$(cfg_field "$backend" harness)"
   model="$(cfg_field "$backend" model)"
   base_url="$(cfg_field "$backend" base_url)"
   key_env="$(cfg_field "$backend" api_key_env)"
   case "$harness" in
-    claude) harness_claude "$persona" "$model" "$*" ;;
-    codex)  harness_codex  "$persona" "$model" "$base_url" "$key_env" "$*" ;;
-    aider)  harness_aider  "$persona" "$model" "$base_url" "$key_env" "$*" ;;
+    claude) harness_claude "$persona" "$model" "$skills_prompt" "$*" ;;
+    codex)  harness_codex  "$persona" "$model" "$base_url" "$key_env" "$skills_prompt" "$*" ;;
+    aider)  harness_aider  "$persona" "$model" "$base_url" "$key_env" "$skills_prompt" "$*" ;;
     "") echo "config error: backend '$backend' is undefined or missing 'harness'" >&2; exit 1 ;;
     *)  echo "config error: unknown harness '$harness' for backend '$backend'" >&2; exit 1 ;;
   esac
+}
+
+# Revise stages resolve review threads; a bad resolve_policy must fail loudly up front
+# (before the reviser runs), surfacing the error on the issue rather than aborting mid-stage.
+validate_resolve_policy() {
+  local err
+  if ! err="$(cfg_resolve_policy 2>&1 1>/dev/null)"; then
+    note "❌ ${err}" 2>/dev/null || true
+    printf '%s\n' "$err" >&2
+    exit 1
+  fi
 }
 
 # Fail-fast: before running any agent, verify every referenced backend resolves to an
@@ -263,10 +409,11 @@ validate_backends() {
   fi
 }
 
-# Role-based entry point used by stages: resolve the role's backend, then dispatch.
+# Role-based entry point used by stages: resolve the role's backend, inject skills, then dispatch.
 run_agent() {
   local role="$1" persona="$2"; shift 2
-  dispatch_backend "$(cfg_backend_for "$role")" "$persona" "$*"
+  local skills_prompt; skills_prompt="$(skills_system_prompt "$role")"
+  dispatch_backend "$(cfg_backend_for "$role")" "$persona" "$skills_prompt" "$*"
 }
 
 note()    { gh issue comment "$ISSUE_NUMBER" --body "$1" >/dev/null; }
@@ -287,10 +434,14 @@ Write an implementation spec to the file ${SPEC_PATH} (create parent dirs)."
       --title "#${ISSUE_NUMBER}: ${ISSUE_TITLE}" \
       --body "Closes #${ISSUE_NUMBER}
 
-Spec: \`${SPEC_PATH}\` — review it, then add **agent:respec** to revise or **agent:code** to proceed."
+Spec: \`${SPEC_PATH}\` — review it, then add **agent:revise-spec** to revise or **agent:code** to proceed."
   fi
   add_label spec-review
-  note "📋 **Spec drafted** → \`${SPEC_PATH}\`. Review the draft PR, then add \`agent:respec\` or \`agent:code\`."
+  note "📋 **Spec drafted** → \`${SPEC_PATH}\`. Review the draft PR, then add \`agent:revise-spec\` or \`agent:code\`."
+  if cfg_auto_flag advance_spec_to_code; then
+    add_label "agent:code"
+    note "🤖 **Auto mode** — \`agent:code\` applied. Add \`agent:revise-spec\` to interrupt and revise the spec first."
+  fi
 }
 
 stage_respec() {
@@ -303,7 +454,8 @@ Rewrite ${SPEC_PATH} in place. Keep the same section structure."
   git add "$SPEC_PATH"
   git commit -m "spec: revise per review (#${ISSUE_NUMBER})" >/dev/null || echo "no spec changes"
   git push --force-with-lease
-  note "📝 **Spec updated** per review. Re-review, then add \`agent:respec\` again or \`agent:code\`."
+  reply_and_resolve "$BRANCH"
+  note "📝 **Spec updated** per review. Re-review, then add \`agent:revise-spec\` again or \`agent:code\`."
 }
 
 stage_code() {
@@ -333,13 +485,18 @@ stage_test() {
 
 stage_open_pr() {
   git push -u origin "$BRANCH" --force-with-lease
-  if ! gh pr view "$BRANCH" >/dev/null 2>&1; then
+  # Detect an existing open PR by head branch. `gh pr view "$BRANCH"` does not reliably
+  # resolve a draft PR opened by an earlier `agent:spec` run, so the guard fell through,
+  # `gh pr create` ran anyway, and failed under `set -e` ("a pull request … already exists") —
+  # which skipped the review and stamped `agent:failed` on every spec→code sequence.
+  # Querying by --head resolves reliably.
+  if [[ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null)" ]]; then
     gh pr create --base main --head "$BRANCH" \
       --title "#${ISSUE_NUMBER}: ${ISSUE_TITLE}" \
       --body "Closes #${ISSUE_NUMBER}
 
 Spec: \`${SPEC_PATH}\`
-Generated by the Polis agent pipeline." 2>/dev/null || true   # tolerate "PR already exists" (spec step may have opened it)
+Generated by the Polis agent pipeline."
   fi
   gh pr ready "$BRANCH" 2>/dev/null || true   # un-draft now that code exists
 }
@@ -347,7 +504,7 @@ Generated by the Polis agent pipeline." 2>/dev/null || true   # tolerate "PR alr
 # Run one reviewer on a backend against a described target; echoes verdict ("approve"/"block").
 review_target() {
   local persona="$1" backend="$2" out="$3" target_desc="$4"
-  dispatch_backend "$backend" "$persona" "Review ${target_desc} for issue #${ISSUE_NUMBER}.
+  dispatch_backend "$backend" "$persona" "" "Review ${target_desc} for issue #${ISSUE_NUMBER}.
 Submit a GitHub PR review with inline comments via gh.
 Then write ONLY the verdict JSON object to the file ${out}." >/dev/null
   jq -r '.verdict' "$out" 2>/dev/null || echo block
@@ -445,7 +602,7 @@ stage_human_fix() {
 Address every point with minimal changes:
 ${feedback}"
   else
-    # No comment was left — treat agent:fix as 'make the failing tests pass'.
+    # No comment was left — treat agent:revise-code as 'make the failing tests pass'.
     instruction="No written feedback was left on the PR for issue #${ISSUE_NUMBER}.
 Run scripts/test.sh, diagnose why it fails, and apply minimal changes to make every test pass."
   fi
@@ -453,6 +610,7 @@ Run scripts/test.sh, diagnose why it fails, and apply minimal changes to make ev
   git add -A
   git commit -m "fix: address human review (#${ISSUE_NUMBER})" >/dev/null || echo "no changes"
   git push --force-with-lease
+  reply_and_resolve "$BRANCH"
   if run_project_tests >/dev/null 2>&1; then
     remove_label tests-failing
     add_label needs-human-review
@@ -460,25 +618,44 @@ Run scripts/test.sh, diagnose why it fails, and apply minimal changes to make ev
   else
     add_label tests-failing
     add_label needs-human-review
-    note "🔧 **Applied fixes** — tests still **failing** ❌. Add a PR comment with more detail and re-apply \`agent:fix\`, or inspect the Actions run."
+    note "🔧 **Applied fixes** — tests still **failing** ❌. Add a PR comment with more detail and re-apply \`agent:revise-code\`, or inspect the Actions run."
   fi
 }
 
 stage_finalize() {
-  local labels="needs-human-review"
-  [[ "${CONVERGED:-false}" == "false" ]] && labels="${labels},agent:cap-reached"
-  [[ "${TESTS_PASS:-true}"  == "false" ]] && labels="${labels},tests-failing"
-  gh pr edit "$BRANCH" --add-label "$labels" || true
-  gh pr edit "$BRANCH" --add-reviewer "$REPO_OWNER" 2>/dev/null || true
+  local converged="${CONVERGED:-false}" tests_ok="${TESTS_PASS:-true}"
   local reviews="" i=0 persona backend
   while IFS=$'\t' read -r persona backend; do
     reviews+="- **${persona%.md}:** $(jq -r '.summary' "/tmp/review-${i}.json" 2>/dev/null || echo n/a)"$'\n'
     i=$((i+1))
   done < <(cfg_reviewers)
+
+  if cfg_auto_flag merge_when_green && [[ "$converged" == "true" && "$tests_ok" == "true" ]]; then
+    gh pr comment "$BRANCH" --body "$(cat <<EOF
+## 🤖 Agent pipeline summary (auto mode)
+- **Status:** converged ✅
+- **Tests:** passing
+- **Spec:** \`${SPEC_PATH}\`
+
+### Final reviews
+${reviews}
+Auto-merging — all checks passed.
+EOF
+)" || true
+    gh pr merge "$BRANCH" --squash --delete-branch 2>/dev/null || true
+    note "✅ **Auto-merged** — all reviewers approved and tests passing."
+    return 0
+  fi
+
+  local labels="needs-human-review"
+  [[ "$converged" == "false" ]] && labels="${labels},agent:cap-reached"
+  [[ "$tests_ok"  == "false" ]] && labels="${labels},tests-failing"
+  gh pr edit "$BRANCH" --add-label "$labels" || true
+  gh pr edit "$BRANCH" --add-reviewer "$REPO_OWNER" 2>/dev/null || true
   gh pr comment "$BRANCH" --body "$(cat <<EOF
 ## 🤖 Agent pipeline summary
-- **Status:** $([[ "${CONVERGED:-false}" == "true" ]] && echo "converged ✅" || echo "hit round cap ⚠️")
-- **Tests:** $([[ "${TESTS_PASS:-true}" == "true" ]] && echo "passing" || echo "failing ❌")
+- **Status:** $([[ "$converged" == "true" ]] && echo "converged ✅" || echo "hit round cap ⚠️")
+- **Tests:** $([[ "$tests_ok" == "true" ]] && echo "passing" || echo "failing ❌")
 - **Spec:** \`${SPEC_PATH}\`
 
 ### Final reviews
@@ -509,10 +686,14 @@ Write an architecture document to ${ARCH_PATH} (create parent dirs). It MUST end
     gh pr create --draft --base main --head "$ARCH_BRANCH" \
       --title "arch: #${ISSUE_NUMBER} ${ISSUE_TITLE}" \
       --body "Architecture for #${ISSUE_NUMBER}.
-Review \`${ARCH_PATH}\`, then add **agent:rearch** to revise or **agent:decompose** to create the issues."
+Review \`${ARCH_PATH}\`, then add **agent:revise-arch** to revise or **agent:decompose** to create the issues."
   fi
   add_label arch-review
-  note "🏛️ **Architecture drafted** → \`${ARCH_PATH}\`. Review the draft PR, then add \`agent:rearch\` or \`agent:decompose\`."
+  note "🏛️ **Architecture drafted** → \`${ARCH_PATH}\`. Review the draft PR, then add \`agent:revise-arch\` or \`agent:decompose\`."
+  if cfg_auto_flag advance_arch_to_decompose; then
+    add_label "agent:decompose"
+    note "🤖 **Auto mode** — \`agent:decompose\` applied. Add \`agent:revise-arch\` to interrupt and revise first."
+  fi
 }
 
 stage_rearch() {
@@ -525,7 +706,8 @@ Rewrite ${ARCH_PATH} in place. Keep the '## Work breakdown' section and its exac
   git add "$ARCH_PATH"
   git commit -m "arch: revise per review (#${ISSUE_NUMBER})" >/dev/null || echo "no arch changes"
   git push --force-with-lease
-  note "📝 **Architecture updated** per review. Re-review, then add \`agent:rearch\` again or \`agent:decompose\`."
+  reply_and_resolve "$ARCH_BRANCH"
+  note "📝 **Architecture updated** per review. Re-review, then add \`agent:revise-arch\` again or \`agent:decompose\`."
 }
 
 # Emit "PHASE<TAB>ISSUE_TITLE" for each issue under '## Work breakdown'.
@@ -568,6 +750,9 @@ main() {
   case "$STAGE" in
     decompose|test|open-pr) : ;;   # no agents -> skip backend validation
     *) validate_backends ;;
+  esac
+  case "$STAGE" in
+    respec|rearch|human-fix) validate_resolve_policy ;;
   esac
   case "$STAGE" in
     arch)         stage_arch ;;
